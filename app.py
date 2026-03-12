@@ -1,9 +1,38 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import streamlit.components.v1 as components
 from datetime import datetime
 
 st.set_page_config(page_title="HealthifyDiksha AI", layout="centered")
+
+# --- 🕒 LIVE CORNER CLOCK ---
+components.html("""
+    <div style="font-family: sans-serif; text-align: right; color: #888; font-size: 14px;">
+        <span id="clock" style="font-weight: bold;"></span>
+    </div>
+    <script>
+        function updateTime() {
+            var d = new Date();
+            var options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+            document.getElementById('clock').innerText = d.toLocaleDateString('en-US', options) + " | " + d.toLocaleTimeString();
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
+    </script>
+""", height=30)
+
+# --- 🔄 MIDNIGHT RESET ENGINE ---
+current_date = datetime.now().date()
+
+if 'last_reset_date' not in st.session_state:
+    st.session_state.last_reset_date = current_date
+
+# If the day has changed, clear the logs and water, but keep the database and stock
+if st.session_state.last_reset_date != current_date:
+    st.session_state.daily_logs = pd.DataFrame(columns=['Time', 'Meal', 'Qty', 'Cals', 'P', 'C', 'F'])
+    st.session_state.water_ml = 0
+    st.session_state.last_reset_date = current_date
 
 # --- 🧠 DYNAMIC DATABASE & MEMORY ---
 if 'nutrition_db' not in st.session_state:
@@ -29,7 +58,6 @@ if 'stock' not in st.session_state:
 if 'daily_logs' not in st.session_state:
     st.session_state.daily_logs = pd.DataFrame(columns=['Time', 'Meal', 'Qty', 'Cals', 'P', 'C', 'F'])
 
-# New Memory State for Water
 if 'water_ml' not in st.session_state:
     st.session_state.water_ml = 0
 
@@ -56,7 +84,7 @@ st.progress(min(total_prot / 90.0, 1.0), text=f"Protein Goal: {total_prot}g / 90
 # --- 💧 HYDRATION TRACKER ---
 st.divider()
 st.subheader("💧 Hydration Tracker")
-water_goal = 3500 # 3.5 Liters
+water_goal = 3500 
 
 st.progress(min(st.session_state.water_ml / water_goal, 1.0), text=f"Water Intake: {st.session_state.water_ml} ml / {water_goal} ml")
 
@@ -67,7 +95,7 @@ if w_col1.button("🥤 + 250 ml (Glass)"):
 if w_col2.button("🍼 + 500 ml (Bottle)"):
     st.session_state.water_ml += 500
     st.rerun()
-if w_col3.button("🔄 Reset Water"):
+if w_col3.button("🔄 Undo / Reset Water"):
     st.session_state.water_ml = 0
     st.rerun()
 
@@ -101,7 +129,6 @@ with st.expander("➕ Log Food (Auto-Calculate)", expanded=True):
         
         st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_entry], ignore_index=True)
         
-        # Automatically deduct from stock if it exists
         if selected_food in st.session_state.stock:
             st.session_state.stock[selected_food] = max(0, st.session_state.stock[selected_food] - servings)
         st.rerun()
@@ -143,8 +170,13 @@ with st.sidebar:
     st.header("🩹 Recovery Hub")
     st.checkbox("Daily Calcium Tablet")
     st.checkbox("Daily Physio (9 PM)")
-    if datetime.now().strftime("%A") == "Friday":
-        st.warning("🚨 Take **Genivit D3**")
+    
+    today_name = datetime.now().strftime("%A")
+    if today_name == "Friday":
+        st.warning("🚨 Take **Genivit D3** [cite: 131, 151]")
+        
+    st.info("Status: **50% Weight Bearing** [cite: 168]")
+    st.info("Focus: **Quadriceps & Hamstrings** [cite: 135, 158]")
     
     st.write("---")
     st.subheader("🛒 Current Pantry")
