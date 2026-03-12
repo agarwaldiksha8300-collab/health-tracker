@@ -3,7 +3,6 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit.components.v1 as components
 from datetime import datetime
-import os
 
 st.set_page_config(page_title="HealthifyDiksha AI", layout="centered", page_icon="🍏")
 
@@ -30,7 +29,6 @@ def load_kaggle_csv(uploaded_file):
     try:
         df = pd.read_csv(uploaded_file)
         for _, row in df.iterrows():
-            # Matches the exact column names from batthulavinay/indian-food-nutrition
             name = str(row.get('Dish Name', 'Unknown')).strip()
             cals = float(row.get('Calories (kcal)', 0))
             p = float(row.get('Protein (g)', 0))
@@ -48,25 +46,36 @@ current_date = datetime.now().date()
 if 'last_reset_date' not in st.session_state:
     st.session_state.last_reset_date = current_date
 
+# New: Added Calcium and Physio to the History Vault
 if 'history_db' not in st.session_state:
-    st.session_state.history_db = pd.DataFrame(columns=['Date', 'Cals', 'Protein', 'Water_ml'])
+    st.session_state.history_db = pd.DataFrame(columns=['Date', 'Cals', 'Protein', 'Water_ml', 'Calcium_Taken', 'Physio_Done'])
 
 if 'weight_history' not in st.session_state:
     st.session_state.weight_history = pd.DataFrame({'Date': [current_date], 'Weight': [70.0]})
+
+# New: Persistent Daily Trackers for Meds & Physio
+if 'cal_taken' not in st.session_state:
+    st.session_state.cal_taken = False
+if 'physio_done' not in st.session_state:
+    st.session_state.physio_done = False
 
 if st.session_state.last_reset_date != current_date:
     yesterday_data = pd.DataFrame([{
         'Date': st.session_state.last_reset_date,
         'Cals': st.session_state.daily_logs['Cals'].sum() if 'daily_logs' in st.session_state else 0,
         'Protein': st.session_state.daily_logs['P'].sum() if 'daily_logs' in st.session_state else 0,
-        'Water_ml': st.session_state.water_ml if 'water_ml' in st.session_state else 0
+        'Water_ml': st.session_state.water_ml if 'water_ml' in st.session_state else 0,
+        'Calcium_Taken': st.session_state.cal_taken,
+        'Physio_Done': st.session_state.physio_done
     }])
     st.session_state.history_db = pd.concat([st.session_state.history_db, yesterday_data], ignore_index=True)
     st.session_state.daily_logs = pd.DataFrame(columns=['Time', 'Meal', 'Qty', 'Cals', 'P', 'C', 'F'])
     st.session_state.water_ml = 0
+    st.session_state.cal_taken = False
+    st.session_state.physio_done = False
     st.session_state.last_reset_date = current_date
 
-# --- 🧠 DATABASE (GROWS DYNAMICALLY) ---
+# --- 🧠 DATABASE ---
 if 'nutrition_db' not in st.session_state:
     st.session_state.nutrition_db = {
         "Paneer (100g)": {"cals": 265, "p": 18, "c": 2, "f": 20},
@@ -77,7 +86,10 @@ if 'nutrition_db' not in st.session_state:
         "Banana (1 pc)": {"cals": 105, "p": 1, "c": 27, "f": 0},
         "Orange (1 pc)": {"cals": 45, "p": 1, "c": 11, "f": 0},
         "Unsweetened PB (1 tbsp)": {"cals": 90, "p": 4, "c": 3, "f": 8},
-        "Oats (30g)": {"cals": 117, "p": 5, "c": 20, "f": 2}
+        "Oats (30g)": {"cals": 117, "p": 5, "c": 20, "f": 2},
+        "Masala Dosa (1 pc)": {"cals": 415, "p": 8, "c": 60, "f": 15},
+        "Veg Biryani (1 bowl)": {"cals": 350, "p": 8, "c": 55, "f": 10},
+        "Margherita Pizza (1 slice)": {"cals": 250, "p": 10, "c": 30, "f": 10}
     }
 
 if 'stock' not in st.session_state:
@@ -92,7 +104,6 @@ if 'daily_logs' not in st.session_state:
 if 'water_ml' not in st.session_state:
     st.session_state.water_ml = 0
 
-# Base Calculations
 target_cals = 1350
 consumed_cals = st.session_state.daily_logs['Cals'].sum()
 remaining_cals = max(0, target_cals - consumed_cals)
@@ -144,6 +155,21 @@ if page == "🏠 Dashboard":
             st.session_state.water_ml += 500
             st.rerun()
 
+    # --- NEW: DASHBOARD RECOVERY TRACKER ---
+    st.divider()
+    st.subheader("🩹 Daily Recovery Tracker")
+    r1, r2 = st.columns(2)
+    with r1:
+        if st.session_state.cal_taken:
+            st.success("✅ Calcium Taken")
+        else:
+            st.error("❌ Calcium Pending")
+    with r2:
+        if st.session_state.physio_done:
+            st.success("✅ Physio Done")
+        else:
+            st.warning("⏳ Physio Pending (9 PM)")
+
 # ==========================================
 # PAGE 2: FOOD DIARY
 # ==========================================
@@ -156,7 +182,6 @@ elif page == "🍽️ Food Diary":
         st.markdown("Search your expanding library of foods.")
         col1, col2 = st.columns([2, 1])
         with col1:
-            # Dropdown naturally accommodates thousands of items once CSV is loaded
             selected_food = st.selectbox("Search Food", list(st.session_state.nutrition_db.keys()))
         with col2:
             servings = st.number_input("Portion (e.g., 0.5)", min_value=0.01, value=1.00, step=0.10, format="%.2f")
@@ -171,7 +196,6 @@ elif page == "🍽️ Food Diary":
             
             st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_entry], ignore_index=True)
             
-            # Deduct from stock ONLY if you own it in your pantry
             if selected_food in st.session_state.stock:
                 st.session_state.stock[selected_food] = max(0, st.session_state.stock[selected_food] - servings)
                 
@@ -179,7 +203,7 @@ elif page == "🍽️ Food Diary":
             st.rerun()
             
     with tab2:
-        st.markdown("Ate at a restaurant? Log the macros here so it doesn't mess up your pantry.")
+        st.markdown("Ate at a restaurant? Log the macros here.")
         custom_meal = st.text_input("What did you eat? (e.g., Subway Sandwich)")
         c_col1, c_col2, c_col3, c_col4 = st.columns(4)
         custom_cals = c_col1.number_input("Calories", min_value=0)
@@ -196,6 +220,27 @@ elif page == "🍽️ Food Diary":
                 st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_entry], ignore_index=True)
                 st.success(f"Logged {custom_meal}!")
                 st.rerun()
+
+    st.divider()
+    st.markdown("### ✏️ Edit or Remove Logged Meals")
+    if not st.session_state.daily_logs.empty:
+        log_options = {f"{i}: {row['Time']} - {row['Meal']} ({row['Qty']} portions)": i for i, row in st.session_state.daily_logs.iterrows()}
+        selected_log_str = st.selectbox("Select a meal to remove", list(log_options.keys()))
+        
+        if st.button("Remove Meal"):
+            idx_to_remove = log_options[selected_log_str]
+            row_to_remove = st.session_state.daily_logs.loc[idx_to_remove]
+            
+            meal_name = row_to_remove['Meal']
+            qty_removed = row_to_remove['Qty']
+            if meal_name in st.session_state.stock:
+                st.session_state.stock[meal_name] += qty_removed
+                
+            st.session_state.daily_logs = st.session_state.daily_logs.drop(idx_to_remove).reset_index(drop=True)
+            st.success("Meal removed and macros recalculated!")
+            st.rerun()
+    else:
+        st.info("Your food diary is empty. Log a meal above first!")
         
     st.divider()
     st.subheader("📋 Today's Intake")
@@ -220,9 +265,9 @@ elif page == "💡 AI Diet Coach":
     if total_prot < 40 and st.session_state.stock.get("Paneer (100g)", 0) > 0:
         st.success("**Protein Power Bowl**\n\nUse your stocked **Paneer**. This directly supports your quadriceps and hamstring recovery.")
     elif current_hour >= 21 and st.session_state.stock.get("Curd (200g)", 0) > 0:
-        st.success("**Late Night Recovery**\n\nUse your stocked **Curd**. The slow-release casein protein aids ACL interstitial oedema repair overnight.")
+        st.success("**Late Night Recovery**\n\nUse your stocked **Curd**. The slow-release casein protein aids tissue repair overnight.")
     else:
-        st.info("Grab some fruit or hydration. Ensure you stick to your 1,350 daily limit for the June wedding target.")
+        st.info("Grab some fruit or hydration. Ensure you stick to your 1350 daily limit.")
 
 # ==========================================
 # PAGE 4: RECOVERY & BODY
@@ -249,7 +294,12 @@ elif page == "🩹 Recovery & Body":
 
     st.divider()
     st.markdown("### 💊 Daily Medications")
-    cal_taken = st.checkbox("🦴 Calcium Tablet (For Bone Contusion)")
+    
+    # NEW: Persistent Calcium Log
+    new_cal = st.checkbox("🦴 Log Calcium Tablet", value=st.session_state.cal_taken)
+    if new_cal != st.session_state.cal_taken:
+        st.session_state.cal_taken = new_cal
+        st.rerun()
     
     if datetime.now().strftime("%A") == "Friday":
         st.error("🚨 **FRIDAY ALERT:** Take your Genivit D3 today!")
@@ -260,7 +310,11 @@ elif page == "🩹 Recovery & Body":
     st.info("⚖️ **Mobility Rule:** Strictly 50% Weight Bearing Walk with Walker.")
     st.info("💪 **Focus Areas:** Quadriceps, Hamstrings, and Calf Muscles Strengthening.")
     
-    physio_done = st.checkbox("✅ 9:00 PM Physio Session Completed")
+    # NEW: Persistent Physio Log
+    new_physio = st.checkbox("✅ Log 9:00 PM Physio Session Completed", value=st.session_state.physio_done)
+    if new_physio != st.session_state.physio_done:
+        st.session_state.physio_done = new_physio
+        st.rerun()
 
 # ==========================================
 # PAGE 5: PANTRY MANAGER
@@ -269,31 +323,48 @@ elif page == "🛒 Pantry Manager":
     st.title("🛒 Groceries & Library")
     
     st.markdown("### 📦 Current Inventory")
-    for item, qty in st.session_state.stock.items():
-        if qty <= 1:
-            st.error(f"{item}: {qty} (Restock Needed!)")
-        else:
-            st.success(f"{item}: {qty}")
-            
+    if not st.session_state.stock:
+        st.info("Your pantry is completely empty!")
+    else:
+        for item, qty in st.session_state.stock.items():
+            if qty <= 1:
+                st.error(f"{item}: {qty} (Restock Needed!)")
+            else:
+                st.success(f"{item}: {qty}")
+                
     st.divider()
     
-    # --- THE MASS IMPORTER ---
-    with st.expander("📂 Bulk Import Data (Kaggle/CSV)", expanded=True):
-        st.markdown("""
-        **Expand your Food Diary instantly.**
-        1. Download `Indian_Food_Nutrition_Processed.csv` from Kaggle.
-        2. Upload it here. The AI will parse it and add it to your searchable food database.
-        *Note: For the Compendium PDF, use a free online tool to convert it to a CSV first, then upload it here.*
-        """)
+    st.markdown("### ✏️ Edit or Remove Stock")
+    if st.session_state.stock:
+        e_col1, e_col2 = st.columns(2)
+        edit_item = e_col1.selectbox("Select item to modify", list(st.session_state.stock.keys()))
         
+        current_qty = st.session_state.stock[edit_item]
+        new_qty = e_col2.number_input("Set exact quantity (Set to 0 to remove)", min_value=0.0, value=float(current_qty), step=0.5)
+        
+        if st.button("Save Changes"):
+            if new_qty == 0:
+                del st.session_state.stock[edit_item]
+                st.success(f"Removed {edit_item} from pantry.")
+            else:
+                st.session_state.stock[edit_item] = new_qty
+                st.success(f"Updated {edit_item} to {new_qty}.")
+            st.rerun()
+    else:
+        st.caption("Add items to your pantry to edit them here.")
+
+    st.divider()
+    
+    with st.expander("📂 Bulk Import Data (Kaggle/CSV)"):
+        st.markdown("Download your CSV and upload it here to expand your Food Diary instantly.")
         uploaded_csv = st.file_uploader("Upload Nutrition CSV", type=["csv"])
         if uploaded_csv:
             new_items = load_kaggle_csv(uploaded_csv)
             if new_items:
                 st.session_state.nutrition_db.update(new_items)
-                st.success(f"🔥 Successfully added {len(new_items)} new Indian foods to your Diary!")
+                st.success(f"🔥 Successfully added {len(new_items)} new foods to your Diary!")
             else:
-                st.error("Could not parse file. Ensure it has the columns: 'Dish Name', 'Calories (kcal)', 'Protein (g)', 'Carbohydrates (g)', 'Fats (g)'")
+                st.error("Could not parse file. Ensure column names match.")
 
     st.divider()
     with st.expander("➕ Add Single Food & Restock"):
