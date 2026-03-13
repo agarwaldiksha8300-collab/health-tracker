@@ -3,8 +3,33 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit.components.v1 as components
 from datetime import datetime
+import json
+import os
 
 st.set_page_config(page_title="HealthifyDiksha AI", layout="centered", page_icon="🍏")
+
+# --- 💾 PERSISTENT STORAGE ENGINE ---
+DATA_FILE = "healthify_data.json"
+
+def save_state():
+    """Saves the current session state to a local JSON file."""
+    data = {
+        'last_reset_date': str(st.session_state.last_reset_date),
+        'history_db': st.session_state.history_db.to_dict('records') if not st.session_state.history_db.empty else [],
+        'weight_history': st.session_state.weight_history.to_dict('records') if not st.session_state.weight_history.empty else [],
+        'custom_tasks': st.session_state.custom_tasks,
+        'nutrition_db': st.session_state.nutrition_db,
+        'stock': st.session_state.stock,
+        'daily_logs': st.session_state.daily_logs.to_dict('records') if not st.session_state.daily_logs.empty else [],
+        'water_ml': st.session_state.water_ml
+    }
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f)
+
+def update_and_rerun():
+    """Forces a save before refreshing the UI."""
+    save_state()
+    st.rerun()
 
 # --- 🕒 LIVE CORNER CLOCK ---
 components.html("""
@@ -22,7 +47,7 @@ components.html("""
     </script>
 """, height=30)
 
-# --- 📂 BULK CSV LOADER (KAGGLE SYNC) ---
+# --- 📂 BULK CSV LOADER ---
 @st.cache_data
 def load_kaggle_csv(uploaded_file):
     new_items = {}
@@ -34,50 +59,44 @@ def load_kaggle_csv(uploaded_file):
             p = float(row.get('Protein (g)', 0))
             c = float(row.get('Carbohydrates (g)', 0))
             f = float(row.get('Fats (g)', 0))
-            
             if name != 'nan' and name != 'Unknown':
                 new_items[name] = {"cals": cals, "p": p, "c": c, "f": f}
         return new_items
     except Exception as e:
         return {}
 
-# --- 🔄 STATE & RESET ENGINE ---
+# --- 🧠 INITIALIZE DATA FROM STORAGE ---
+if 'initialized' not in st.session_state:
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r") as f:
+                data = json.load(f)
+            st.session_state.last_reset_date = datetime.strptime(data.get('last_reset_date', str(datetime.now().date())), "%Y-%m-%d").date()
+            st.session_state.history_db = pd.DataFrame(data.get('history_db', []))
+            st.session_state.weight_history = pd.DataFrame(data.get('weight_history', []))
+            st.session_state.custom_tasks = data.get('custom_tasks', {})
+            st.session_state.nutrition_db = data.get('nutrition_db', {})
+            st.session_state.stock = data.get('stock', {})
+            st.session_state.daily_logs = pd.DataFrame(data.get('daily_logs', []))
+            st.session_state.water_ml = data.get('water_ml', 0)
+        except Exception:
+            pass
+    st.session_state.initialized = True
+
+# --- FALLBACK DEFAULTS (If file doesn't exist yet) ---
 current_date = datetime.now().date()
 if 'last_reset_date' not in st.session_state:
     st.session_state.last_reset_date = current_date
-
 if 'history_db' not in st.session_state:
     st.session_state.history_db = pd.DataFrame(columns=['Date', 'Cals', 'Protein', 'Water_ml'])
-
 if 'weight_history' not in st.session_state:
     st.session_state.weight_history = pd.DataFrame({'Date': [current_date], 'Weight': [70.0]})
-
-# NEW: Dynamic Task Tracker Memory
 if 'custom_tasks' not in st.session_state:
     st.session_state.custom_tasks = {
         "🦴 Calcium Tablet": {"freq": "Daily", "done": False},
         "✅ 9:00 PM Physio Session": {"freq": "Daily", "done": False},
         "☀️ Genivit D3": {"freq": "Friday", "done": False}
     }
-
-if st.session_state.last_reset_date != current_date:
-    yesterday_data = pd.DataFrame([{
-        'Date': st.session_state.last_reset_date,
-        'Cals': st.session_state.daily_logs['Cals'].sum() if 'daily_logs' in st.session_state else 0,
-        'Protein': st.session_state.daily_logs['P'].sum() if 'daily_logs' in st.session_state else 0,
-        'Water_ml': st.session_state.water_ml if 'water_ml' in st.session_state else 0
-    }])
-    st.session_state.history_db = pd.concat([st.session_state.history_db, yesterday_data], ignore_index=True)
-    st.session_state.daily_logs = pd.DataFrame(columns=['Time', 'Meal', 'Qty', 'Cals', 'P', 'C', 'F'])
-    st.session_state.water_ml = 0
-    
-    # Reset all task checkboxes at midnight
-    for task in st.session_state.custom_tasks:
-        st.session_state.custom_tasks[task]["done"] = False
-        
-    st.session_state.last_reset_date = current_date
-
-# --- 🧠 DATABASE ---
 if 'nutrition_db' not in st.session_state:
     st.session_state.nutrition_db = {
         "Paneer (100g)": {"cals": 265, "p": 18, "c": 2, "f": 20},
@@ -87,29 +106,39 @@ if 'nutrition_db' not in st.session_state:
         "Avocado (1/2 pc)": {"cals": 160, "p": 2, "c": 9, "f": 15},
         "Banana (1 pc)": {"cals": 105, "p": 1, "c": 27, "f": 0},
         "Orange (1 pc)": {"cals": 45, "p": 1, "c": 11, "f": 0},
-        "Unsweetened PB (1 tbsp)": {"cals": 90, "p": 4, "c": 3, "f": 8},
-        "Oats (30g)": {"cals": 117, "p": 5, "c": 20, "f": 2},
-        "Masala Dosa (1 pc)": {"cals": 415, "p": 8, "c": 60, "f": 15},
-        "Veg Biryani (1 bowl)": {"cals": 350, "p": 8, "c": 55, "f": 10},
-        "Margherita Pizza (1 slice)": {"cals": 250, "p": 10, "c": 30, "f": 10}
+        "Oats (30g)": {"cals": 117, "p": 5, "c": 20, "f": 2}
     }
-
 if 'stock' not in st.session_state:
     st.session_state.stock = {
         "Paneer (100g)": 2, "Curd (200g)": 3, "Milk (200ml)": 5, 
         "Protein Bread (1 slice)": 10, "Avocado (1/2 pc)": 2, "Oats (30g)": 15
     }
-
 if 'daily_logs' not in st.session_state:
     st.session_state.daily_logs = pd.DataFrame(columns=['Time', 'Meal', 'Qty', 'Cals', 'P', 'C', 'F'])
-
 if 'water_ml' not in st.session_state:
     st.session_state.water_ml = 0
 
+# --- 🔄 MIDNIGHT RESET ENGINE ---
+if st.session_state.last_reset_date != current_date:
+    yesterday_data = pd.DataFrame([{
+        'Date': st.session_state.last_reset_date,
+        'Cals': st.session_state.daily_logs['Cals'].sum() if not st.session_state.daily_logs.empty else 0,
+        'Protein': st.session_state.daily_logs['P'].sum() if not st.session_state.daily_logs.empty else 0,
+        'Water_ml': st.session_state.water_ml
+    }])
+    st.session_state.history_db = pd.concat([st.session_state.history_db, yesterday_data], ignore_index=True)
+    st.session_state.daily_logs = pd.DataFrame(columns=['Time', 'Meal', 'Qty', 'Cals', 'P', 'C', 'F'])
+    st.session_state.water_ml = 0
+    for task in st.session_state.custom_tasks:
+        st.session_state.custom_tasks[task]["done"] = False
+    st.session_state.last_reset_date = current_date
+    save_state()
+
+# Base Calculations
 target_cals = 1350
-consumed_cals = st.session_state.daily_logs['Cals'].sum()
+consumed_cals = st.session_state.daily_logs['Cals'].sum() if not st.session_state.daily_logs.empty else 0
 remaining_cals = max(0, target_cals - consumed_cals)
-total_prot = st.session_state.daily_logs['P'].sum()
+total_prot = st.session_state.daily_logs['P'].sum() if not st.session_state.daily_logs.empty else 0
 
 # --- 📱 NAVIGATION MENU ---
 st.sidebar.title("🍏 HealthifyMenu")
@@ -130,7 +159,7 @@ if page == "🏠 Dashboard":
     col1, col2 = st.columns([1.5, 1])
     with col1:
         fig = go.Figure(go.Pie(
-            values=[consumed_cals, remaining_cals],
+            values=[consumed_cals, remaining_cals] if remaining_cals > 0 else [consumed_cals, 0],
             labels=["Consumed", "Remaining"],
             hole=.7,
             marker_colors=['#00e676', '#f5f5f5'],
@@ -152,16 +181,14 @@ if page == "🏠 Dashboard":
         w1, w2 = st.columns(2)
         if w1.button("🥤 +250ml"):
             st.session_state.water_ml += 250
-            st.rerun()
+            update_and_rerun()
         if w2.button("🍼 +500ml"):
             st.session_state.water_ml += 500
-            st.rerun()
+            update_and_rerun()
 
-    # --- NEW: DYNAMIC DASHBOARD TASKS ---
     st.divider()
     st.subheader("📋 Today's Tasks")
     today_name = datetime.now().strftime("%A")
-    
     tasks_for_today = {k: v for k, v in st.session_state.custom_tasks.items() if v["freq"] in ["Daily", today_name]}
     
     if not tasks_for_today:
@@ -201,12 +228,11 @@ elif page == "🍽️ Food Diary":
             ]], columns=['Time', 'Meal', 'Qty', 'Cals', 'P', 'C', 'F'])
             
             st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_entry], ignore_index=True)
-            
             if selected_food in st.session_state.stock:
                 st.session_state.stock[selected_food] = max(0, st.session_state.stock[selected_food] - servings)
                 
             st.success(f"Logged {servings}x {selected_food} at {time_str}!")
-            st.rerun()
+            update_and_rerun()
             
     with tab2:
         st.markdown("Ate at a restaurant? Log the macros here.")
@@ -228,7 +254,7 @@ elif page == "🍽️ Food Diary":
                 ]], columns=['Time', 'Meal', 'Qty', 'Cals', 'P', 'C', 'F'])
                 st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_entry], ignore_index=True)
                 st.success(f"Logged {custom_meal} at {time_str}!")
-                st.rerun()
+                update_and_rerun()
 
     st.divider()
     st.markdown("### ✏️ Edit or Remove Logged Meals")
@@ -247,7 +273,7 @@ elif page == "🍽️ Food Diary":
                 
             st.session_state.daily_logs = st.session_state.daily_logs.drop(idx_to_remove).reset_index(drop=True)
             st.success("Meal removed and macros recalculated!")
-            st.rerun()
+            update_and_rerun()
     else:
         st.info("Your food diary is empty. Log a meal above first!")
         
@@ -297,29 +323,24 @@ elif page == "🩹 Recovery & Tasks":
             new_w_entry = pd.DataFrame({'Date': [datetime.now().date()], 'Weight': [new_weight]})
             st.session_state.weight_history = pd.concat([st.session_state.weight_history, new_w_entry], ignore_index=True)
             st.success("Weight saved!")
-            st.rerun()
+            update_and_rerun()
 
     if not st.session_state.weight_history.empty:
         chart_data = st.session_state.weight_history.set_index('Date')['Weight']
         st.line_chart(chart_data)
 
     st.divider()
-    
-    # --- NEW: DYNAMIC TASK CHECKBOXES ---
     st.markdown("### 📋 Today's Tasks & Medications")
     today_name = datetime.now().strftime("%A")
     
     for task_name, task_info in st.session_state.custom_tasks.items():
-        # Only show tasks that are Daily, or assigned specifically to today (e.g., Friday)
         if task_info["freq"] in ["Daily", today_name]:
             new_status = st.checkbox(task_name, value=task_info["done"])
             if new_status != task_info["done"]:
                 st.session_state.custom_tasks[task_name]["done"] = new_status
-                st.rerun()
+                update_and_rerun()
                 
     st.divider()
-    
-    # --- NEW: TASK MANAGER ---
     with st.expander("➕ Manage Custom Tasks & Reminders"):
         st.markdown("**Add a new task:**")
         t_col1, t_col2 = st.columns([2, 1])
@@ -330,7 +351,7 @@ elif page == "🩹 Recovery & Tasks":
             if new_task_name:
                 st.session_state.custom_tasks[new_task_name] = {"freq": new_task_freq, "done": False}
                 st.success(f"Added {new_task_name} ({new_task_freq})")
-                st.rerun()
+                update_and_rerun()
 
         st.markdown("**Remove a task:**")
         if st.session_state.custom_tasks:
@@ -338,7 +359,7 @@ elif page == "🩹 Recovery & Tasks":
             if st.button("Remove Task"):
                 del st.session_state.custom_tasks[del_task]
                 st.success("Task removed!")
-                st.rerun()
+                update_and_rerun()
 
     st.divider()
     st.markdown("### 🏃‍♀️ Physiotherapy Rules")
@@ -378,7 +399,7 @@ elif page == "🛒 Pantry Manager":
             else:
                 st.session_state.stock[edit_item] = new_qty
                 st.success(f"Updated {edit_item} to {new_qty}.")
-            st.rerun()
+            update_and_rerun()
     else:
         st.caption("Add items to your pantry to edit them here.")
 
@@ -392,6 +413,7 @@ elif page == "🛒 Pantry Manager":
             if new_items:
                 st.session_state.nutrition_db.update(new_items)
                 st.success(f"🔥 Successfully added {len(new_items)} new foods to your Diary!")
+                save_state()
             else:
                 st.error("Could not parse file. Ensure column names match.")
 
@@ -411,4 +433,4 @@ elif page == "🛒 Pantry Manager":
                 st.session_state.nutrition_db[new_name] = {"cals": new_cals, "p": new_p, "c": new_c, "f": new_f}
                 st.session_state.stock[new_name] = initial_stock
                 st.success(f"{new_name} added to database and pantry!")
-                st.rerun()
+                update_and_rerun()
